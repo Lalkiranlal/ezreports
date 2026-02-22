@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -24,18 +26,28 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _initializeApp() async {
+    developer.log('🚀 Initializing MainScreen...', name: 'MainScreen');
+    
     // Request all permissions on app start
+    developer.log('🔐 Requesting all permissions...', name: 'MainScreen');
     await _permissionService.requestAllPermissions(context);
     
     // Initialize WebView
+    developer.log('🌐 Initializing WebView...', name: 'MainScreen');
     _webViewService.initializeWebView(context, _handleWebViewMessage);
     
+    developer.log('✅ MainScreen initialization complete', name: 'MainScreen');
     setState(() {
       _isLoading = false;
     });
   }
 
   void _handleWebViewMessage(String message) {
+    developer.log(
+      '📨 MainScreen received WebView message: $message',
+      name: 'MainScreen',
+    );
+    
     // Handle messages from WebView
     // You can add specific handling here if needed
     print('WebView message: $message');
@@ -44,9 +56,9 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Scaffold(
+      return const Scaffold(
         backgroundColor: AppColors.primary,
-        body: const Center(
+        body: Center(
           child: CircularProgressIndicator(
             valueColor: AlwaysStoppedAnimation<Color>(AppColors.surface),
           ),
@@ -55,8 +67,10 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return Scaffold(
-      body: WebViewWidget(
-        controller: _webViewService.webViewController,
+      
+      body: Container(
+        padding: const EdgeInsets.only(top: 15),
+        child: WebViewWidget(controller: _webViewService.webViewController),
       ),
     );
   }

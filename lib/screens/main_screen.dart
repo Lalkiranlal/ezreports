@@ -25,6 +25,15 @@ class _MainScreenState extends State<MainScreen> {
     _initializeApp();
   }
 
+  Future<bool> _onWillPop() async {
+    // Prevent back navigation - user must use web page navigation
+    developer.log(
+      '🚫 Back navigation blocked - use web page navigation',
+      name: 'MainScreen',
+    );
+    return false;
+  }
+
   Future<void> _initializeApp() async {
     developer.log('🚀 Initializing MainScreen...', name: 'MainScreen');
     
@@ -66,11 +75,19 @@ class _MainScreenState extends State<MainScreen> {
       );
     }
 
-    return Scaffold(
-      
-      body: Container(
-        padding: const EdgeInsets.only(top: 15),
-        child: WebViewWidget(controller: _webViewService.webViewController),
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        body: RefreshIndicator(
+          onRefresh: () async {
+            developer.log('🔄 Pull-to-refresh triggered', name: 'MainScreen');
+            await _webViewService.reloadCurrentPage();
+          },
+          child: Container(
+            padding: const EdgeInsets.only(top: 15),
+            child: WebViewWidget(controller: _webViewService.webViewController),
+          ),
+        ),
       ),
     );
   }

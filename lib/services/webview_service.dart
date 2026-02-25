@@ -603,4 +603,14 @@ class WebViewService {
       developer.log('❌ Error clearing form data: $e', name: 'WebViewService');
     }
   }
+
+  // Reload current page (for pull-to-refresh)
+  Future<void> reloadCurrentPage() async {
+    try {
+      developer.log('🔄 Reloading current page', name: 'WebViewService');
+      await _webViewController.reload();
+    } catch (e) {
+      developer.log('❌ Error reloading page: $e', name: 'WebViewService');
+    }
+  }
 }

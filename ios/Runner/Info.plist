@@ -50,7 +50,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs photo library access to select images for reports.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app needs location access to add location information to reports.</string>
+<string>Location access is required to include precise location data in reports. This data is only used within the app for reporting purposes.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app needs location access to add location information to reports.</string>
 </dict>

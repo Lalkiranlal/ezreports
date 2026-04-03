@@ -189,24 +189,107 @@ class WebViewService {
         return;
       }
 
-      developer.log('⏳ Fetching current position...', name: 'WebViewService');
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
-      );
-      
       developer.log(
-        '📍 Location obtained: Lat=${position.latitude}, Lon=${position.longitude}',
+        '⏳ Fetching current position with enhanced accuracy...',
+        name: 'WebViewService',
+      );
+
+      // Get multiple readings for better accuracy
+      List<Position> positions = [];
+      for (int i = 0; i < 3; i++) {
+        try {
+          Position position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+            timeLimit: const Duration(seconds: 10),
+          );
+          positions.add(position);
+          developer.log(
+            '📍 Reading ${i + 1}: Lat=${position.latitude}, Lon=${position.longitude}, Accuracy=${position.accuracy}m',
+            name: 'WebViewService',
+          );
+
+          // Wait between readings for better satellite lock
+          if (i < 2) {
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        } catch (e) {
+          developer.log(
+            '⚠️ Reading ${i + 1} failed: $e',
+            name: 'WebViewService',
+          );
+        }
+      }
+
+      if (positions.isEmpty) {
+        const errorMsg = 'Failed to get any location readings';
+        developer.log('🚫 $errorMsg', name: 'WebViewService');
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
+        return;
+      }
+
+      // Use the most accurate reading
+      Position bestPosition = positions.reduce(
+        (a, b) => a.accuracy < b.accuracy ? a : b,
+      );
+
+      // If we have multiple readings, calculate average for better accuracy
+      if (positions.length > 1) {
+        double avgLat =
+            positions.map((p) => p.latitude).reduce((a, b) => a + b) /
+            positions.length;
+        double avgLon =
+            positions.map((p) => p.longitude).reduce((a, b) => a + b) /
+            positions.length;
+        double avgAccuracy =
+            positions.map((p) => p.accuracy).reduce((a, b) => a + b) /
+            positions.length;
+
+        // Create averaged position if variance is low
+        double latVariance =
+            positions
+                .map((p) => (p.latitude - avgLat).abs())
+                .reduce((a, b) => a + b) /
+            positions.length;
+        double lonVariance =
+            positions
+                .map((p) => (p.longitude - avgLon).abs())
+                .reduce((a, b) => a + b) /
+            positions.length;
+
+        if (latVariance < 0.0001 && lonVariance < 0.0001) {
+          // Very low variance
+          bestPosition = Position(
+            latitude: avgLat,
+            longitude: avgLon,
+            accuracy: avgAccuracy,
+            altitude: bestPosition.altitude,
+            altitudeAccuracy: bestPosition.altitudeAccuracy,
+            heading: bestPosition.heading,
+            headingAccuracy: 0.0,
+            speed: bestPosition.speed,
+            speedAccuracy: bestPosition.speedAccuracy,
+            timestamp: bestPosition.timestamp,
+          );
+          developer.log(
+            '📊 Using averaged position for better accuracy',
+            name: 'WebViewService',
+          );
+        }
+      }
+
+      developer.log(
+        '📍 Final location: Lat=${bestPosition.latitude}, Lon=${bestPosition.longitude}, Accuracy=${bestPosition.accuracy}m',
         name: 'WebViewService',
       );
 
       final response = {
         'action': 'locationResponse',
         'data': {
-          'latitude': position.latitude,
-          'longitude': position.longitude,
-          'accuracy': position.accuracy,
-          'timestamp': position.timestamp.toIso8601String(),
+          'latitude': bestPosition.latitude,
+          'longitude': bestPosition.longitude,
+          'accuracy': bestPosition.accuracy,
+          'timestamp': bestPosition.timestamp.toIso8601String(),
+          'readings_count': positions.length,
         },
         'status': 'success'
       };

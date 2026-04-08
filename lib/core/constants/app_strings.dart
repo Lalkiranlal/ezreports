@@ -12,7 +12,6 @@ class AppStrings {
   
   // Error messages
   static const String permissionDenied = 'Permission denied';
-  static const String permissionPermanentlyDenied = 'Permission permanently denied. Please enable in settings.';
   static const String locationServiceDisabled = 'Location services are disabled';
   static const String somethingWentWrong = 'Something went wrong';
   

@@ -28,7 +28,7 @@ class PermissionService {
       }
 
       if (permission == LocationPermission.deniedForever) {
-        _showDialog(context, AppStrings.permissionPermanentlyDenied, AppStrings.locationPermissionMessage);
+        // Don't show permanently denied message - just return false
         return false;
       }
 
@@ -53,7 +53,7 @@ class PermissionService {
       }
 
       if (status.isPermanentlyDenied) {
-        _showDialog(context, AppStrings.permissionPermanentlyDenied, AppStrings.cameraPermissionMessage);
+        // Don't show permanently denied message - just return false
         return false;
       }
 

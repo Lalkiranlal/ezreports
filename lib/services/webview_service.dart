@@ -1,11 +1,16 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:dio/dio.dart';
+import 'package:open_filex/open_filex.dart' as fileOpen;
+import 'package:fluttertoast/fluttertoast.dart';
 
 import 'permission_service.dart';
 
@@ -17,6 +22,9 @@ class WebViewService {
   late WebViewController _webViewController;
   final PermissionService _permissionService = PermissionService();
 
+  // Track last blob URL to prevent infinite loops
+  String? _lastBlobUrl;
+
   WebViewController get webViewController => _webViewController;
 
   void initializeWebView(
@@ -24,7 +32,7 @@ class WebViewService {
     Function(String) onMessageReceived,
   ) {
     developer.log('🌐 Initializing WebView...', name: 'WebViewService');
-    
+
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
@@ -56,20 +64,28 @@ class WebViewService {
             // Test connection by sending a ping to web
             _testConnection();
           },
-          onWebResourceError: (WebResourceError error) {
-            developer.log(
-              '❌ WebView resource error: ${error.description} (${error.errorCode})',
-              name: 'WebViewService',
-            );
-          },
           onNavigationRequest: (NavigationRequest request) {
             developer.log(
               '🧭 WebView navigation request: ${request.url}',
               name: 'WebViewService',
             );
-            if (request.url.startsWith('https://')) {
+
+            if (_isDownloadableUrl(request.url)) {
+              developer.log('Download detected: ${request.url}');
+              _downloadUrlFile(request.url);
+              return NavigationDecision.prevent;
+            } else if (request.url.startsWith('blob:')) {
+              _downloadBlob(request.url);
+              return NavigationDecision.prevent;
+            }
+
+            // Allow https URLs
+            if (request.url.startsWith('https://') ||
+                request.url.startsWith('http://')) {
               return NavigationDecision.navigate;
             }
+
+            // Block other navigation attempts
             developer.log(
               '🚫 Navigation blocked: ${request.url}',
               name: 'WebViewService',
@@ -77,6 +93,23 @@ class WebViewService {
             return NavigationDecision.prevent;
           },
         ),
+      )
+      ..addJavaScriptChannel(
+        'BlobDownloader',
+        onMessageReceived: (JavaScriptMessage message) async {
+          developer.log('Blob data received', name: 'WebViewService');
+          try {
+            final Map<String, dynamic> data = jsonDecode(message.message);
+            final base64Data = data['base64'];
+            final mimeType = data['mimeType'];
+            await _saveBlobAsFile(base64Data, mimeType: mimeType);
+          } catch (e) {
+            developer.log(
+              'Error processing blob message: $e',
+              name: 'WebViewService',
+            );
+          }
+        },
       )
       ..addJavaScriptChannel(
         'FlutterChannel',
@@ -88,10 +121,10 @@ class WebViewService {
           _handleJavaScriptMessage(message.message, context);
         },
       )
-      ..loadRequest(Uri.parse('https://ezyreport.com'));
+      ..loadRequest(Uri.parse('https://testingditto.ezyreport.com/'));
 
     developer.log(
-      '🌐 WebView loading URL: https://ezyreport.com',
+      '🌐 WebView loading URL: https://testingditto.ezyreport.com/',
       name: 'WebViewService',
     );
   }
@@ -104,11 +137,11 @@ class WebViewService {
       '🔄 Processing JavaScript message: $message',
       name: 'WebViewService',
     );
-    
+
     try {
       final data = json.decode(message);
       final action = data['action'] as String?;
-      
+
       developer.log('🎯 Action detected: $action', name: 'WebViewService');
 
       switch (action) {
@@ -152,40 +185,49 @@ class WebViewService {
           developer.log('💾 Saving form data from web', name: 'WebViewService');
           await _saveFormData(data['data'] as Map<String, dynamic>);
           break;
+        case 'downloadFile':
+          developer.log(
+            '⬇️ Handling downloadFile request',
+            name: 'WebViewService',
+          );
+          await _downloadFile(data['url'] as String, data['type'] as String);
+          break;
         default:
           developer.log('❓ Unknown action: $action', name: 'WebViewService');
           _sendToWeb(
             json.encode({
-            'error': 'Unknown action: $action',
-            'status': 'error'
-          }));
+              'error': 'Unknown action: $action',
+              'status': 'error',
+            }),
+          );
       }
     } catch (e) {
       developer.log('💥 Error processing message: $e', name: 'WebViewService');
       _sendToWeb(
         json.encode({
-        'error': 'Failed to process message: $e',
-        'status': 'error'
-      }));
+          'error': 'Failed to process message: $e',
+          'status': 'error',
+        }),
+      );
     }
   }
 
   Future<void> _getLocation(BuildContext context) async {
     developer.log('🗺️ Getting location...', name: 'WebViewService');
-    
+
     try {
-      bool hasPermission = await _permissionService.requestLocationPermission(context);
+      bool hasPermission = await _permissionService.requestLocationPermission(
+        context,
+      );
       developer.log(
         '🔐 Location permission granted: $hasPermission',
         name: 'WebViewService',
       );
-      
+
       if (!hasPermission) {
         const errorMsg = 'Location permission denied';
         developer.log('🚫 $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg,
-          'status': 'error'
-        }));
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
         return;
       }
 
@@ -291,7 +333,7 @@ class WebViewService {
           'timestamp': bestPosition.timestamp.toIso8601String(),
           'readings_count': positions.length,
         },
-        'status': 'success'
+        'status': 'success',
       };
 
       developer.log(
@@ -302,29 +344,27 @@ class WebViewService {
     } catch (e) {
       developer.log('💥 Location error: $e', name: 'WebViewService');
       _sendToWeb(
-        json.encode({
-        'error': 'Failed to get location: $e',
-        'status': 'error'
-      }));
+        json.encode({'error': 'Failed to get location: $e', 'status': 'error'}),
+      );
     }
   }
 
   Future<void> _captureImage(BuildContext context) async {
     developer.log('📸 Starting camera capture...', name: 'WebViewService');
-    
+
     try {
-      bool hasPermission = await _permissionService.requestCameraPermission(context);
+      bool hasPermission = await _permissionService.requestCameraPermission(
+        context,
+      );
       developer.log(
         '🔐 Camera permission granted: $hasPermission',
         name: 'WebViewService',
       );
-      
+
       if (!hasPermission) {
         const errorMsg = 'Camera permission denied';
         developer.log('🚫 $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg,
-          'status': 'error'
-        }));
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
         return;
       }
 
@@ -342,7 +382,7 @@ class WebViewService {
           '📷 Image captured: ${image.name}',
           name: 'WebViewService',
         );
-        
+
         // Convert image to base64 for web transmission
         final bytes = await image.readAsBytes();
         final base64Image = base64Encode(bytes);
@@ -350,7 +390,7 @@ class WebViewService {
           '🔄 Image converted to base64 (${bytes.length} bytes)',
           name: 'WebViewService',
         );
-        
+
         final response = {
           'action': 'fileResponse',
           'data': {
@@ -359,7 +399,7 @@ class WebViewService {
             'path': image.path,
             'size': bytes.length,
           },
-          'status': 'success'
+          'status': 'success',
         };
 
         developer.log(
@@ -370,36 +410,35 @@ class WebViewService {
       } else {
         const errorMsg = 'No image captured';
         developer.log('⚠️ $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg,
-          'status': 'error'
-        }));
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
       }
     } catch (e) {
       developer.log('💥 Camera capture error: $e', name: 'WebViewService');
       _sendToWeb(
         json.encode({
-        'error': 'Failed to capture image: $e',
-        'status': 'error'
-      }));
+          'error': 'Failed to capture image: $e',
+          'status': 'error',
+        }),
+      );
     }
   }
 
   Future<void> _pickImage(BuildContext context) async {
     developer.log('🖼️ Starting gallery pick...', name: 'WebViewService');
-    
+
     try {
-      bool hasPermission = await _permissionService.requestStoragePermission(context);
+      bool hasPermission = await _permissionService.requestStoragePermission(
+        context,
+      );
       developer.log(
         '🔐 Storage permission granted: $hasPermission',
         name: 'WebViewService',
       );
-      
+
       if (!hasPermission) {
         const errorMsg = 'Storage permission denied';
         developer.log('🚫 $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg,
-          'status': 'error'
-        }));
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
         return;
       }
 
@@ -417,14 +456,14 @@ class WebViewService {
           '🖼️ Image selected: ${image.name}',
           name: 'WebViewService',
         );
-        
+
         final bytes = await image.readAsBytes();
         final base64Image = base64Encode(bytes);
         developer.log(
           '🔄 Image converted to base64 (${bytes.length} bytes)',
           name: 'WebViewService',
         );
-        
+
         final response = {
           'action': 'fileResponse',
           'data': {
@@ -433,7 +472,7 @@ class WebViewService {
             'path': image.path,
             'size': bytes.length,
           },
-          'status': 'success'
+          'status': 'success',
         };
 
         developer.log(
@@ -444,17 +483,13 @@ class WebViewService {
       } else {
         const errorMsg = 'No image selected';
         developer.log('⚠️ $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg,
-          'status': 'error'
-        }));
+        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
       }
     } catch (e) {
       developer.log('💥 Gallery pick error: $e', name: 'WebViewService');
       _sendToWeb(
-        json.encode({
-        'error': 'Failed to pick image: $e',
-        'status': 'error'
-      }));
+        json.encode({'error': 'Failed to pick image: $e', 'status': 'error'}),
+      );
     }
   }
 
@@ -695,5 +730,199 @@ class WebViewService {
     } catch (e) {
       developer.log('❌ Error reloading page: $e', name: 'WebViewService');
     }
+  }
+
+  // Download file from URL
+  Future<void> _downloadFile(String url, String type) async {
+    try {
+      developer.log(
+        '⬇️ Starting download: $url (type: $type)',
+        name: 'WebViewService',
+      );
+
+      // Get the Downloads directory
+      Directory? downloadsDir;
+      if (Platform.isAndroid) {
+        downloadsDir = Directory('/storage/emulated/0/Download');
+      } else {
+        downloadsDir = await getDownloadsDirectory();
+      }
+
+      if (downloadsDir == null) {
+        throw Exception('Could not access downloads directory');
+      }
+
+      // Create the file name from URL
+      final fileName = url.split('/').last;
+      if (fileName.isEmpty) {
+        throw Exception('Invalid file URL');
+      }
+
+      final filePath = '${downloadsDir.path}/$fileName';
+      final file = File(filePath);
+
+      // Download the file
+      final uri = Uri.parse(url);
+      final request = await HttpClient().getUrl(uri);
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to download file: ${response.statusCode}');
+      }
+
+      // Write file to disk
+      final bytes = await response.toList();
+      await file.writeAsBytes(bytes.expand((list) => list).toList());
+
+      developer.log(
+        '✅ File downloaded successfully: $filePath',
+        name: 'WebViewService',
+      );
+
+      // Send success response to web
+      _sendToWeb(
+        json.encode({
+          'action': 'downloadFileResponse',
+          'status': 'success',
+          'message': 'File downloaded successfully',
+          'filePath': filePath,
+          'fileName': fileName,
+        }),
+      );
+    } catch (e) {
+      developer.log('❌ Error downloading file: $e', name: 'WebViewService');
+
+      // Send error response to web
+      _sendToWeb(
+        json.encode({
+          'action': 'downloadFileResponse',
+          'status': 'error',
+          'message': 'Failed to download file: $e',
+        }),
+      );
+    }
+  }
+
+  bool _isDownloadableUrl(String url) {
+    return url.contains(
+      RegExp(
+        r"\.(pdf|doc|docx|xls|xlsx|zip|rar|jpg|jpeg|png|gif|mp4|mp3)($|\?)",
+      ),
+    );
+  }
+
+  String _extractBasename(String url) {
+    String fileName = Uri.parse(url).pathSegments.last;
+    fileName = fileName.split('?').first;
+    return fileName;
+  }
+
+  Future<void> _downloadUrlFile(String url) async {
+    try {
+      final deviceDir = await getTemporaryDirectory();
+      String fileName = _extractBasename(url);
+
+      if (fileName.isEmpty || !fileName.contains('.')) {
+        fileName = 'download_${DateTime.now().millisecondsSinceEpoch}.bin';
+      }
+
+      String localPath = '${deviceDir.path}/$fileName';
+      developer.log("Downloading to $localPath", name: 'WebViewService');
+
+      Dio dio = Dio();
+      await dio.download(
+        url,
+        localPath,
+        onReceiveProgress: (received, total) {
+          developer.log(
+            'Download progress: ${(received / total * 100).toStringAsFixed(2)}%',
+            name: 'WebViewService',
+          );
+        },
+      );
+
+      final result = await fileOpen.OpenFilex.open(localPath);
+      if (result.type == fileOpen.ResultType.noAppToOpen) {
+        Fluttertoast.showToast(msg: 'No app found to open this file');
+      }
+      if (result.type != fileOpen.ResultType.done) {
+        developer.log(
+          'Could not open file: ${result.message}',
+          name: 'WebViewService',
+        );
+      }
+    } catch (e) {
+      developer.log('Error downloading file: $e', name: 'WebViewService');
+    }
+  }
+
+  Future<void> _saveBlobAsFile(String base64Data, {String? mimeType}) async {
+    try {
+      final bytes = base64Decode(base64Data);
+      String extension = 'bin';
+      if (mimeType != null) {
+        if (mimeType ==
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+          extension = 'xlsx';
+        else if (mimeType == 'application/pdf')
+          extension = 'pdf';
+        else if (mimeType == 'image/jpeg')
+          extension = 'jpg';
+        else if (mimeType == 'image/png')
+          extension = 'png';
+        else if (mimeType == 'application/msword')
+          extension = 'doc';
+        else if (mimeType ==
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+          extension = 'docx';
+      }
+
+      final directory = await getTemporaryDirectory();
+      final filePath =
+          '${directory.path}/blob_${DateTime.now().millisecondsSinceEpoch}.$extension';
+      final file = File(filePath);
+
+      await file.writeAsBytes(bytes);
+      developer.log('Blob saved to: $filePath', name: 'WebViewService');
+
+      final openResult = await fileOpen.OpenFilex.open(filePath);
+      if (openResult.type == fileOpen.ResultType.noAppToOpen) {
+        Fluttertoast.showToast(msg: 'No app found to open this file');
+      }
+      developer.log(
+        'OpenFile result: ${openResult.type}',
+        name: 'WebViewService',
+      );
+    } catch (e) {
+      developer.log('Error saving blob file: $e', name: 'WebViewService');
+    }
+  }
+
+  void _downloadBlob(String blobUrl) {
+    developer.log(
+      'Attempting to download blob: $blobUrl',
+      name: 'WebViewService',
+    );
+    final javascriptCode =
+        """
+    (async function() {
+      try {
+        const response = await fetch('$blobUrl');
+        const blob = await response.blob();
+        const mimeType = blob.type;
+        const reader = new FileReader();
+        reader.onloadend = function() {
+          BlobDownloader.postMessage(JSON.stringify({
+            base64: reader.result.split(',')[1],
+            mimeType: mimeType
+          }));
+        };
+        reader.readAsDataURL(blob);
+      } catch (e) {
+        console.error('Error fetching blob:', e);
+      }
+    })();
+    """;
+    _webViewController.runJavaScript(javascriptCode);
   }
 }

@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <supports-screens android:requiresSmallestWidthDp="320" />
+    
+    <!-- 16KB page size support for Android 14+ -->
+    <meta-data android:name="android.app.property.ENABLE_16KB_PAGE_SIZE" android:value="true" />
+    
     <!-- Permissions for location, camera, and storage -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

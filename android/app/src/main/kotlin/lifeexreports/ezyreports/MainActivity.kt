@@ -1,4 +1,4 @@
-package com.lifeexreports.ezyreports
+package lifeexreports.ezyreports
 
 import io.flutter.embedding.android.FlutterActivity
 

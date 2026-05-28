@@ -131,33 +131,36 @@ class _MainScreenState extends State<MainScreen> {
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Scaffold(
-        body: RefreshIndicator(
-          onRefresh: () async {
-            developer.log('🔄 Pull-to-refresh triggered', name: 'MainScreen');
-            await _webViewService.reloadCurrentPage();
-          },
-          child: Stack(
-            children: [
-              WebViewWidget(controller: _webViewService.webViewController),
-              // Download FAB
-              if (_showDownloadFab && _downloadUrl != null)
-                Positioned(
-                  bottom: 20,
-                  right: 20,
-                  child: FloatingActionButton.extended(
-                    onPressed: () async {
-                      developer.log(
-                        '📱 Download FAB clicked: $_downloadUrl',
-                        name: 'MainScreen',
-                      );
-                      await _navigateToFileApp(_downloadUrl!);
-                    },
-                    icon: const Icon(Icons.download),
-                    label: const Text('Open Downloaded File'),
-                    backgroundColor: AppColors.primary,
+        body: SafeArea(
+          bottom: false,
+          child: RefreshIndicator(
+            onRefresh: () async {
+              developer.log('🔄 Pull-to-refresh triggered', name: 'MainScreen');
+              await _webViewService.reloadCurrentPage();
+            },
+            child: Stack(
+              children: [
+                WebViewWidget(controller: _webViewService.webViewController),
+                // Download FAB
+                if (_showDownloadFab && _downloadUrl != null)
+                  Positioned(
+                    bottom: 20,
+                    right: 20,
+                    child: FloatingActionButton.extended(
+                      onPressed: () async {
+                        developer.log(
+                          '📱 Download FAB clicked: $_downloadUrl',
+                          name: 'MainScreen',
+                        );
+                        await _navigateToFileApp(_downloadUrl!);
+                      },
+                      icon: const Icon(Icons.download),
+                      label: const Text('Open Downloaded File'),
+                      backgroundColor: AppColors.primary,
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

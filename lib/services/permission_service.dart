@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -64,33 +66,32 @@ class PermissionService {
     }
   }
 
+  Future<int> _getAndroidSdkVersion() async {
+    if (!Platform.isAndroid) return 0;
+    try {
+      const channel = MethodChannel('lifeexreports.ezyreports/device');
+      final int? sdkInt = await channel.invokeMethod<int>('getSdkInt');
+      return sdkInt ?? 0;
+    } catch (e) {
+      print('Failed to get Android SDK version: $e');
+      return 0;
+    }
+  }
+
   Future<bool> requestStoragePermission(BuildContext context) async {
     try {
       print('STORAGE PERMISSION: METHOD CALLED');
       print('STORAGE PERMISSION: CHECKING CURRENT STATUS');
-      
-      // Try newer media permissions first (Android 13+)
-      PermissionStatus mediaStatus = await Permission.photos.status;
-      print('STORAGE PERMISSION: MEDIA PHOTOS STATUS = $mediaStatus');
-      
-      // If media permission is already granted, no need to request again
-      if (mediaStatus.isGranted) {
-        print('STORAGE PERMISSION: MEDIA PHOTOS ALREADY GRANTED');
-        return true;
-      }
-      
-      if (mediaStatus.isDenied) {
-        print('STORAGE PERMISSION: MEDIA PHOTOS DENIED - REQUESTING MEDIA PERMISSION');
-        mediaStatus = await Permission.photos.request();
-        print('STORAGE PERMISSION: MEDIA REQUEST RESULT = $mediaStatus');
-        
-        if (mediaStatus.isGranted) {
-          print('STORAGE PERMISSION: MEDIA PHOTOS GRANTED AFTER REQUEST');
+
+      if (Platform.isAndroid) {
+        final sdkVersion = await _getAndroidSdkVersion();
+        if (sdkVersion >= 33) {
+          print('Android 13+ (SDK $sdkVersion) detected. Storage permissions not requested because System Photo Picker handles photo selection permission-free.');
           return true;
         }
       }
       
-      // Fall back to legacy storage permission
+      // Fall back to legacy storage permission (Android 12 and below, or other platforms)
       PermissionStatus status = await Permission.storage.status;
       print('STORAGE PERMISSION: LEGACY STORAGE STATUS = $status');
       
@@ -116,15 +117,15 @@ class PermissionService {
         }
       }
 
-      if (status.isPermanentlyDenied || mediaStatus.isPermanentlyDenied) {
+      if (status.isPermanentlyDenied) {
         print('STORAGE PERMISSION: PERMANENTLY DENIED - SHOWING SETTINGS DIALOG');
         _showSettingsDialog(context, 'Storage Permission Required', 
           'Storage permission is permanently denied. Please enable it in app settings to access gallery and files.');
         return false;
       }
 
-      print('STORAGE PERMISSION: GRANTED = ${status.isGranted || mediaStatus.isGranted}');
-      return status.isGranted || mediaStatus.isGranted;
+      print('STORAGE PERMISSION: GRANTED = ${status.isGranted}');
+      return status.isGranted;
     } catch (e) {
       print('STORAGE PERMISSION: EXCEPTION OCCURRED = $e');
       _showDialog(context, AppStrings.somethingWentWrong, 'Failed to get storage permission: $e');

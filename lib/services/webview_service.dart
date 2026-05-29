@@ -121,10 +121,10 @@ class WebViewService {
           _handleJavaScriptMessage(message.message, context);
         },
       )
-      ..loadRequest(Uri.parse('https://testingditto.ezyreport.com/'));
+      ..loadRequest(Uri.parse('https://ezyreport.com/'));
 
     developer.log(
-      '🌐 WebView loading URL: https://testingditto.ezyreport.com/',
+      '🌐 WebView loading URL: https://ezyreport.com/',
       name: 'WebViewService',
     );
   }
@@ -427,22 +427,10 @@ class WebViewService {
     developer.log('🖼️ Starting gallery pick...', name: 'WebViewService');
 
     try {
-      bool hasPermission = await _permissionService.requestStoragePermission(
-        context,
-      );
       developer.log(
-        '🔐 Storage permission granted: $hasPermission',
+        '📁 Opening gallery using system photo picker...',
         name: 'WebViewService',
       );
-
-      if (!hasPermission) {
-        const errorMsg = 'Storage permission denied';
-        developer.log('🚫 $errorMsg', name: 'WebViewService');
-        _sendToWeb(json.encode({'error': errorMsg, 'status': 'error'}));
-        return;
-      }
-
-      developer.log('📁 Opening gallery...', name: 'WebViewService');
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(
         source: ImageSource.gallery,
